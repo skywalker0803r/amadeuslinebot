@@ -17,6 +17,7 @@ from linebot.models import *
 import pandas as pd
 import configparser
 import datetime
+import numpy as np
 
 import requests
 from bs4 import BeautifulSoup
@@ -33,6 +34,36 @@ snames = [py for py in os.listdir('strategies') if py[-3:] == '.py' and py != '_
 strategies = {}
 for s in snames:
     strategies[s[:-3]] = getattr(__import__('strategies.' + s[:-3]), s[:-3]).strategy
+
+# substringSieve
+def substringSieve(string_list):
+  string_list.sort(key=lambda s: len(s), reverse=True)
+  out = []
+  for s in string_list:
+    if not any([s in o for o in out]):
+      out.append(s)
+  return out
+
+# MSKTS
+from simhash import Simhash
+import joblib
+
+class MSKTS(object):
+  '''
+  most similar k text search
+  '''
+  def __init__(self):
+    self.name = 'most similar k text search'
+  
+  def fit(self,database):
+    self.database = map(lambda x:str(x).lower(),database)
+  
+  def predict(self,input_data,k=3):
+    input_data = input_data.lower()
+    score = {}
+    for history_data in self.database:
+      score[history_data] = Simhash(input_data).distance(Simhash(history_data))
+    return sorted(score.items(),key=lambda x:x[1],reverse=False)[:k]
 
 #模擬的函數
 def simulation(strategy):
@@ -263,6 +294,35 @@ def handle_message(event):
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(content))
+    elif (event.source.user_id==host_id) and (event.message.text.split(':')[0]=='@最相似文本搜索'):
+        host_text = event.message.text
+        message = host_text.split(':')[1]
+        
+        # 產生data
+        try:
+            data = pd.read_csv('data.csv')
+        except:
+            data = pd.DataFrame(columns=['txt'],index=[0])
+            data.loc[0,'txt'] = '我們在天上的父，願人都尊你的名為聖，願你的國降臨，願你的旨意行在地上如同行在天上，我們日用的飲食，今日賜給我們，免我們的債，如同我們免了人的債，不叫我們陷入試探，救我們脫離兇惡，因為國度、權柄、榮耀全是你的，直到永遠。'
+        
+        # 擴充data
+        new_index = data.index[-1]+1
+        data.loc[new_index,'txt'] = message
+
+        # 確認沒有重複
+        data2 = pd.DataFrame()
+        data2['txt'] = substringSieve(data['txt'].values.tolist())
+        data = data2
+        
+        # 保存data
+        data.to_csv('data.csv')
+
+        # 使用model訓練跟預測
+        model = MSKTS()
+        model.fit(data['txt'].values.tolist())
+        content = model.predict(message)[0][0]
+        line_bot_api.reply_message(event.reply_token,TextSendMessage(content))
+        
     #=====================================================================================================
     #elif(event.message.text != "個股健診")&(event.message.text != "選股")&(event.message.text != "走勢預測"):
         #串接智能聊天API
